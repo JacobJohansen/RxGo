@@ -6,9 +6,29 @@ import (
 	"github.com/pkg/errors"
 )
 
+type functor struct {
+	value interface{}
+	error error
+}
+
+var emptyFunctor = functor{}
+
+func from(value interface{}) functor {
+	switch v := value.(type) {
+	default:
+		return functor{
+			value: v,
+		}
+	case error:
+		return functor{
+			error: v,
+		}
+	}
+}
+
 // Iterator allows to iterates on an given structure
 type Iterator interface {
-	Next(ctx context.Context) (interface{}, error)
+	Next(ctx context.Context) (functor, error)
 }
 
 type iteratorFromChannel struct {
@@ -27,34 +47,42 @@ type iteratorFromSlice struct {
 	s     []interface{}
 }
 
-func (it *iteratorFromChannel) Next(ctx context.Context) (interface{}, error) {
+func (f *functor) isValue() bool {
+	return f.error == nil
+}
+
+func (f *functor) isError() bool {
+	return f.error != nil
+}
+
+func (it *iteratorFromChannel) Next(ctx context.Context) (functor, error) {
 	select {
 	case <-ctx.Done():
-		return nil, &CancelledSubscriptionError{}
+		return emptyFunctor, &CancelledSubscriptionError{}
 	case <-it.ctx.Done():
-		return nil, &CancelledIteratorError{}
+		return emptyFunctor, &CancelledIteratorError{}
 	case next, ok := <-it.ch:
 		if ok {
-			return next, nil
+			return from(next), nil
 		}
-		return nil, &NoSuchElementError{}
+		return emptyFunctor, &NoSuchElementError{}
 	}
 }
 
-func (it *iteratorFromRange) Next(ctx context.Context) (interface{}, error) {
+func (it *iteratorFromRange) Next(ctx context.Context) (functor, error) {
 	it.current++
 	if it.current <= it.end {
-		return it.current, nil
+		return from(it.current), nil
 	}
-	return nil, errors.Wrap(&NoSuchElementError{}, "range does not contain anymore elements")
+	return emptyFunctor, errors.Wrap(&NoSuchElementError{}, "range does not contain anymore elements")
 }
 
-func (it *iteratorFromSlice) Next(ctx context.Context) (interface{}, error) {
+func (it *iteratorFromSlice) Next(ctx context.Context) (functor, error) {
 	it.index++
 	if it.index < len(it.s) {
-		return it.s[it.index], nil
+		return from(it.s[it.index]), nil
 	}
-	return nil, errors.Wrap(&NoSuchElementError{}, "slice does not contain anymore elements")
+	return emptyFunctor, errors.Wrap(&NoSuchElementError{}, "slice does not contain anymore elements")
 }
 
 func newIteratorFromChannel(ch chan interface{}) Iterator {
